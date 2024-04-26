@@ -7,6 +7,8 @@
       { "src": "/(.*)", "dest": "/server.py" }
     ],
     "env": {
+      "PYTHONPATH": ".",
       "APP_MODULE": "server:app"
     }
   }
+  
