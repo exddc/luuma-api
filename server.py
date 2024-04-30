@@ -1,12 +1,19 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+"""Basic server function for the luuma api."""
+
 import os
+import json
+from collections import defaultdict
+from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel
 import dotenv
 import uvicorn
 from langchain.chains import ConversationChain
 from langchain.chains.conversation.memory import ConversationBufferWindowMemory
 from langchain_groq import ChatGroq
-from collections import defaultdict
+import logging
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
+import logger
 
 dotenv.load_dotenv()
 
@@ -15,6 +22,20 @@ conversational_memory_length = 50
 model = "llama3-8b-8192"
 
 app = FastAPI()
+
+# Initialize logger
+logger = logger.get_module_logger(__name__)
+
+# Initialize token log file and path
+token_log_path = "logs/token_counts.json"
+if not os.path.exists("logs"):
+    os.makedirs("logs")
+if not os.path.isfile(token_log_path):
+    with open(token_log_path, "w") as token_file:
+        json.dump(
+            {"total_input_tokens": 0, "total_output_tokens": 0, "ip_usage": {}},
+            token_file,
+        )
 
 # Maps each conversation_id to its specific ConversationBufferWindowMemory instance
 conversation_memories = defaultdict(
@@ -43,9 +64,12 @@ class Message(BaseModel):
 
 
 @app.post("/message")
-async def handle_message(message: Message):
+async def handle_message(message: Message, request: Request):
     if not message.message:
         raise HTTPException(status_code=400, detail="No message provided")
+
+    client_ip = request.client.host
+    logger.info(f"Message from {client_ip}: {message.message}")
 
     # Retrieve or initialize memory for the specific conversation_id
     memory = conversation_memories[message.conversation_id]
@@ -55,7 +79,7 @@ async def handle_message(message: Message):
         memory.save_context({"input": "initial_context"}, {"output": AI_CONTEXT})
 
     user_question = message.message
-    print(f"User question: {user_question}")
+    input_tokens = len(user_question.split())
 
     # Load past conversation context into memory
     for msg in conversation_histories[message.conversation_id]:
@@ -67,8 +91,29 @@ async def handle_message(message: Message):
 
     # Send message to LLM
     response = conversation(user_question)
+    output_tokens = len(response["response"].split())
+
     message_record = {"human": user_question, "AI": response["response"]}
     conversation_histories[message.conversation_id].append(message_record)
+
+    # Log the token data
+    with open(token_log_path, "r+") as f:
+        token_data = json.load(f)
+        token_data["total_input_tokens"] += input_tokens
+        token_data["total_output_tokens"] += output_tokens
+        if client_ip in token_data["ip_usage"]:
+            token_data["ip_usage"][client_ip]["input_tokens"] += input_tokens
+            token_data["ip_usage"][client_ip]["output_tokens"] += output_tokens
+        else:
+            token_data["ip_usage"][client_ip] = {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            }
+        f.seek(0)
+        json.dump(token_data, f, indent=4)
+        f.truncate()
+
+    logger.info(f"Response to {client_ip}: {response['response']}")
 
     return {"response": response["response"]}
 
