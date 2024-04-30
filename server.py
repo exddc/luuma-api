@@ -3,8 +3,13 @@ from pydantic import BaseModel
 import os
 import dotenv
 import uvicorn
+from groq import Groq
 
 dotenv.load_dotenv()
+
+client = Groq(
+    api_key=os.environ.get("GROQ_API_KEY"),
+)
 
 app = FastAPI()
 
@@ -43,19 +48,26 @@ async def handle_message(message: Message):
     conversation_history[message.conversation_id] = history
 
     # Call the AI with the entire conversation history
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
     try:
-        MESSAGE = client.messages.create(
-            max_tokens=1024,
-            messages=history,
-            model="claude-3-opus-20240229",
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": AI_CONTEXT,
+                },
+                {
+                    "role": "user",
+                    "content": message.message,
+                },
+            ],
+            model="llama3-8b-8192",
         )
-    except anthropic.BadRequestError as e:
+    except Exception as e:
         # Handle specific API errors gracefully
         return {"error": str(e)}
 
     # Get the AI's response and append to history
-    ai_response = MESSAGE.content[0].text
+    ai_response = chat_completion.choices[0].message.content
     history.append(
         {"role": "assistant", "content": ai_response}
     )  # Change 'system' to 'assistant' if needed
