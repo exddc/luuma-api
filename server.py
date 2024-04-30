@@ -3,13 +3,17 @@ from pydantic import BaseModel
 import os
 import dotenv
 import uvicorn
-from groq import Groq
+from langchain.chains import ConversationChain
+from langchain.chains.conversation.memory import ConversationBufferWindowMemory
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+
 
 dotenv.load_dotenv()
 
-client = Groq(
-    api_key=os.environ.get("GROQ_API_KEY"),
-)
+groq_api_key = os.environ["GROQ_API_KEY"]
+conversational_memory_length = 50
+model = "llama3-8b-8192"
 
 app = FastAPI()
 
@@ -24,7 +28,7 @@ class Message(BaseModel):
     conversation_id: str  # Unique identifier for each conversation
 
 
-conversation_history = {}  # Dictionary to store conversation history
+conversation_history = []
 
 AI_CONTEXT = (
     "As a virtual assistant, maintain a neutral and anonymous presence. Do not discuss "
@@ -33,46 +37,34 @@ AI_CONTEXT = (
     "Avoid self-references and keep responses brief and to the point."
 )
 
+memory = ConversationBufferWindowMemory(k=conversational_memory_length)
+# Store the AI context as a permanent fixture in the conversation memory
+memory.save_context({"input": "initial_context"}, {"output": AI_CONTEXT})
+
 
 @app.post("/message")
 async def handle_message(message: Message):
     if not message.message:
         raise HTTPException(status_code=400, detail="No message provided")
 
-    # Retrieve or initialize conversation history
-    history = conversation_history.get(message.conversation_id, [])
+    user_question = message.message
+    print(f"User question: {user_question}")
 
-    # Normally here you would add the AI_CONTEXT, but instead, ensure it is managed internally
-    # Append new user message to history
-    history.append({"role": "user", "content": message.message})
-    conversation_history[message.conversation_id] = history
+    # session state variable
+    if conversation_history:
+        for message in conversation_history:
+            memory.save_context({"input": message["human"]}, {"output": message["AI"]})
 
-    # Call the AI with the entire conversation history
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": AI_CONTEXT,
-                },
-                {
-                    "role": "user",
-                    "content": message.message,
-                },
-            ],
-            model="llama3-8b-8192",
-        )
-    except Exception as e:
-        # Handle specific API errors gracefully
-        return {"error": str(e)}
+    # Initialize Groq Langchain chat object and conversation
+    groq_chat = ChatGroq(groq_api_key=groq_api_key, model_name=model)
+    conversation = ConversationChain(llm=groq_chat, memory=memory)
 
-    # Get the AI's response and append to history
-    ai_response = chat_completion.choices[0].message.content
-    history.append(
-        {"role": "assistant", "content": ai_response}
-    )  # Change 'system' to 'assistant' if needed
+    # Send message to llm
+    response = conversation(user_question)
+    message = {"human": user_question, "AI": response["response"]}
+    conversation_history.append(message)
 
-    return {"response": ai_response}
+    return {"response": response["response"]}
 
 
 if __name__ == "__main__":
