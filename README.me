@@ -1,3 +1,11 @@
+Create new user for server
+sudo adduser --system --group --disabled-login --no-create-home --shell /bin/false luuma_api_user
+
+sudo chown -R luuma_api_user:luuma_api_user /www/luuma-api/
+sudo chmod -R 750 /www/luuma-api/
+sudo chmod -R 770 /www/luuma-api/logs/
+
+
 sudo nano /etc/systemd/system/luuma_api.service
 
 sudo cp luuma_api.service /etc/systemd/system/luuma_api.service
