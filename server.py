@@ -10,9 +10,6 @@ import uvicorn
 from langchain.chains import ConversationChain
 from langchain.chains.conversation.memory import ConversationBufferWindowMemory
 from langchain_groq import ChatGroq
-import logging
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
 import logger
 
 dotenv.load_dotenv()

@@ -1,0 +1,11 @@
+[Unit]
+Description=Luuma Api Service
+After=network.target
+
+[Service]
+User=timoweiss
+ExecStart=/www/luuma-api/.venv/bin/python3 /www/luuma-api/server.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
