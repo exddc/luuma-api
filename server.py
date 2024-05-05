@@ -113,7 +113,3 @@ async def handle_message(message: Message, request: Request):
     logger.info(f"Response to {client_ip}: {response['response']}")
 
     return {"response": response["response"]}
-
-
-if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=5001, reload=True)
