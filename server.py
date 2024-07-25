@@ -16,7 +16,7 @@ dotenv.load_dotenv()
 
 groq_api_key = os.environ["GROQ_API_KEY"]
 conversational_memory_length = 50
-model = "llama3-8b-8192"
+model = "llama-3.1-70b-versatile"
 
 app = FastAPI()
 
