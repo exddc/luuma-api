@@ -1,0 +1,9 @@
+[package]
+name = "luuma-api"
+version = "0.1.0"
+edition = "2021"
+authors = ["Timo Weiss"]
+
+[dependencies]
+dotenv = "0.15.0"
+rocket = "0.5.1"
