@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 User=root
-ExecStart=/www/luuma-api/.venv/bin/python3 /www/luuma-api/server.py
+ExecStart=/www/luuma-api/target/release/luuma-api
 Restart=on-failure
 
 [Install]
