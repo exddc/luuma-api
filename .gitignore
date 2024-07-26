@@ -2,3 +2,4 @@
 /logs
 .env
 .DS_Store
+token_data.json
