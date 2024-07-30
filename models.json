@@ -1,0 +1,14 @@
+{
+    "models": [
+        {
+            "id": "llama-3.1-70b-versatile",
+            "name": "Meta's Llama 3.1 70B Versatile",
+            "description": "A versatile model that can handle a wide range of tasks."
+        },
+        {
+            "id": "gemma2-9b-it",
+            "name": "Google's Gemma2 9B IT",
+            "description": "A model trained by Google that is good for researchers and developers."
+        }
+    ]
+}

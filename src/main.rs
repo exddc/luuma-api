@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::net::IpAddr;
 use std::env;
+use std::fs::File;
 
 #[derive(Deserialize, Serialize)]
 struct Message {
@@ -31,9 +32,40 @@ struct TokenData {
     ip_token_counts: HashMap<String, (usize, usize)>,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct Model {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Deserialize)]
+struct ModelsFile {
+    models: Vec<Model>,
+}
+
 #[get("/")]
 fn index() -> (Status, (ContentType, &'static str))  {
     (Status::Ok, (ContentType::JSON, "{\"message\": \"Hello from luuma!\"}"))
+}
+
+#[catch(404)]
+fn not_found() -> &'static str {
+    "Not Found"
+}
+
+#[get("/models")]
+fn models() -> (Status, (ContentType, String)) {
+    let models = load_models();
+    let response = serde_json::json!(models);
+    (Status::Ok, (ContentType::JSON, response.to_string()))
+}
+
+fn load_models() -> Vec<Model> {
+    let file = File::open("models.json").expect("Cannot open models.json file");
+    let reader = BufReader::new(file);
+    let models_file: ModelsFile = serde_json::from_reader(reader).expect("Error reading JSON data");
+    models_file.models
 }
 
 #[post("/message", data = "<chat_request>")]
@@ -125,4 +157,6 @@ fn rocket() -> _ {
     dotenv().ok();
     rocket::build().mount("/", routes![index])
         .mount("/", routes![message])
+        .mount("/", routes![models])
+        .register("/", catchers![not_found])
 }
