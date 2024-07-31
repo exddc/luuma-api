@@ -19,8 +19,7 @@ struct Message {
 }
 
 #[derive(Deserialize)]
-struct ChatRequest {    
-    conversation_id: String,
+struct ChatRequest {
     model: String,
     messages: Vec<Message>,
 }
@@ -45,13 +44,19 @@ struct ModelsFile {
 }
 
 #[get("/")]
-fn index() -> (Status, (ContentType, &'static str))  {
-    (Status::Ok, (ContentType::JSON, "{\"message\": \"Hello from luuma!\"}"))
+fn index() -> (Status, (ContentType, String))  {
+    let response = serde_json::json!({
+            "message": "Hello from luuma!"
+    });
+    (Status::Ok, (ContentType::JSON, response.to_string()))
 }
 
 #[catch(404)]
-fn not_found() -> &'static str {
-    "Not Found"
+fn not_found() -> (Status, (ContentType, String))  {
+    let response = serde_json::json!({
+            "message": "The requested resource was not found."
+        });
+    (Status::NotFound, (ContentType::JSON, response.to_string()))
 }
 
 #[get("/models")]
@@ -68,10 +73,12 @@ fn load_models() -> Vec<Model> {
     models_file.models
 }
 
-#[post("/message", data = "<chat_request>")]
-async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> (Status, (ContentType, String)) {
-    let groq_api_key = env::var("GROQ_API_KEY").expect("GROQ_API_KEY must be set");
-
+#[post("/conversations/<conversation_id>/message", data = "<chat_request>")]
+async fn message(conversation_id: String, chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> (Status, (ContentType, String)) {
+    if chat_request.messages.is_empty() {
+        return (Status::BadRequest, (ContentType::JSON, "{\"response\": \"Message list cannot be empty.\"}".to_string()));
+    }
+    
     let input_tokens = count_tokens(&chat_request.messages);
     
     let request_body = serde_json::json!({
@@ -83,7 +90,7 @@ async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> 
     let client = Client::new();
     let response = client.post("https://api.groq.com/openai/v1/chat/completions")
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", groq_api_key))
+        .header("Authorization", format!("Bearer {}", env::var("GROQ_API_KEY").expect("GROQ_API_KEY must be set");))
         .json(&request_body)
         .send()
         .await;
@@ -99,12 +106,13 @@ async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> 
             
             let response_body = serde_json::json!({
                 "response": output_content,
-                "conversation_id": chat_request.conversation_id,
+                "conversation_id": conversation_id,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens
             });
             (Status::Ok, (ContentType::JSON, response_body.to_string()))
         }
+        Ok(response) => (Status::BadGateway, (ContentType::JSON, format!("{{\"response\": \"Bad Gateway: {}\"}}", response.status()).to_string())),
         Err(_) => (Status::InternalServerError, (ContentType::JSON, "{\"response\": \"Internal Server Error\"}".to_string()))
     }
 }
@@ -155,8 +163,6 @@ fn check_or_create_file(file_path: &String) -> io::Result<()> {
 #[launch]
 fn rocket() -> _ {
     dotenv().ok();
-    rocket::build().mount("/", routes![index])
-        .mount("/", routes![message])
-        .mount("/", routes![models])
+    rocket::build().mount("/v1", routes![index, message, models])
         .register("/", catchers![not_found])
 }
