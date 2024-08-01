@@ -8,12 +8,11 @@ use dotenv::dotenv;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, File};
 use std::net::IpAddr;
 use std::env;
-use std::fs::File;
 
 #[derive(Deserialize, Serialize)]
 struct Message {
@@ -75,10 +74,25 @@ struct ModelsFile {
     models: Vec<Model>,
 }
 
-const RATE_LIMIT: u32 = 100;
-const RATE_LIMIT_TIME_WINDOW: Duration = Duration::from_secs(60);
+static RATE_LIMIT: Lazy<u32> = Lazy::new(|| {
+    env::var("RATE_LIMIT")
+        .expect("RATE_LIMIT must be set")
+        .parse()
+        .expect("RATE_LIMIT must be a number")
+});
+static RATE_LIMIT_TIME_WINDOW: Lazy<Duration> = Lazy::new(|| {
+    Duration::from_secs(env::var("RATE_LIMIT_TIME_WINDOW")
+        .expect("RATE_LIMIT_TIME_WINDOW must be set")
+        .parse()
+        .expect("RATE_LIMIT_TIME_WINDOW must be a number"))
+});
+
+static UNUSUAL_LONG_RESPONSE_TIME: f64 = 5.0;
 
 static REQUEST_COUNTS: Lazy<Mutex<HashMap<IpAddr, (u32, Instant)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static GROQ_API_KEY: Lazy<String> = Lazy::new(|| {
+    env::var("GROQ_API_KEY").expect("GROQ_API_KEY must be set")
+});
 
 #[get("/")]
 fn index() -> (Status, (ContentType, String))  {
@@ -112,15 +126,20 @@ fn load_models() -> Vec<Model> {
 
 #[post("/conversations/messages", data = "<chat_request>")]
 async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> (Status, (ContentType, String)) {
+    let response_time = Instant::now();
+
     if let Some(ip) = client_ip {
         if !check_rate_limit(ip) {
+            save_request_time(response_time.elapsed().as_secs_f64(), "Too Many Requests".to_string(), Some(ip), 0, 0, "".to_string());
             return (Status::TooManyRequests, (ContentType::JSON, "{\"error\": \"Too Many Requests\"}".to_string()));
         }
     } else {
+        save_request_time(response_time.elapsed().as_secs_f64(), "Unable to determine client IP".to_string(), None, 0, 0, "".to_string());
         return (Status::BadRequest, (ContentType::JSON, "{\"error\": \"Unable to determine client IP\"}".to_string()));
     }
 
     if let Err(validation_error) = chat_request.validate() {
+        save_request_time(response_time.elapsed().as_secs_f64(), validation_error.clone(), client_ip, 0, 0, "".to_string());
         return (Status::BadRequest, (ContentType::JSON, serde_json::json!({"error": validation_error}).to_string()));
     }
     
@@ -135,7 +154,7 @@ async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> 
     let client = Client::new();
     let response = client.post("https://api.groq.com/openai/v1/chat/completions")
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", env::var("GROQ_API_KEY").expect("GROQ_API_KEY must be set")))
+        .header("Authorization", format!("Bearer {}", *GROQ_API_KEY))
         .json(&request_body)
         .send()
         .await;
@@ -155,23 +174,53 @@ async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> 
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens
             });
+            save_request_time(response_time.elapsed().as_secs_f64(), "Ok".to_string(), client_ip, input_tokens, output_tokens, chat_request.model.to_string());
+            if  response_time.elapsed().as_secs_f64() > UNUSUAL_LONG_RESPONSE_TIME {
+                unusual_long_response_log(response_body.to_string());
+            }
             (Status::Ok, (ContentType::JSON, response_body.to_string()))
         }
-        Ok(response) => (Status::BadGateway, (ContentType::JSON, format!("{{\"response\": \"Bad Gateway: {}\"}}", response.status()).to_string())),
-        Err(_) => (Status::InternalServerError, (ContentType::JSON, "{\"response\": \"Internal Server Error\"}".to_string()))
+        Err(_) => {
+            save_request_time(response_time.elapsed().as_secs_f64(), "Internal Server Error".to_string(), client_ip, input_tokens, 0, chat_request.model.to_string());
+            (Status::InternalServerError, (ContentType::JSON, "{\"response\": \"Internal Server Error\"}".to_string()))
+        }
     }
+}
+
+fn save_request_time(duration: f64, status: String, client_ip: Option<IpAddr>, input_tokens: usize, output_tokens: usize, model: String) {
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("request_times.log")
+        .unwrap();
+
+    let line = format!("ip: {}, status: {}, duration: {}, input / output tokens: {}/{}, model: {}", client_ip.unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))), status, duration, input_tokens, output_tokens, model);
+    
+    writeln!(file, "{}", line).unwrap();
+}
+
+fn unusual_long_response_log(output: String) {
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("request_times.log")
+        .unwrap();
+
+    let line = format!("output: {}", output);
+    
+    writeln!(file, "{}", line).unwrap();
 }
 
 fn check_rate_limit(ip: IpAddr) -> bool {
     let mut counts = REQUEST_COUNTS.lock().unwrap();
     let (count, timestamp) = counts.entry(ip).or_insert((0, Instant::now()));
 
-    if timestamp.elapsed() > RATE_LIMIT_TIME_WINDOW {
+    if timestamp.elapsed() > *RATE_LIMIT_TIME_WINDOW {
         *count = 0;
         *timestamp = Instant::now();
     }
 
-    if *count < RATE_LIMIT {
+    if *count < *RATE_LIMIT {
         *count += 1;
         true
     } else {
