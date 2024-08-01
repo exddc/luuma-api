@@ -746,6 +746,7 @@ name = "luuma-api"
 version = "0.1.0"
 dependencies = [
  "dotenv",
+ "once_cell",
  "reqwest",
  "rocket",
  "serde",
