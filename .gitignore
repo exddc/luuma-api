@@ -3,3 +3,4 @@
 .env
 .DS_Store
 token_data.json
+request_times.json
