@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::fs::{OpenOptions, File};
 use std::net::IpAddr;
 use std::env;
+use chrono::Utc;
 
 #[derive(Deserialize, Serialize)]
 struct Message {
@@ -87,7 +88,12 @@ static RATE_LIMIT_TIME_WINDOW: Lazy<Duration> = Lazy::new(|| {
         .expect("RATE_LIMIT_TIME_WINDOW must be a number"))
 });
 
-static UNUSUAL_LONG_RESPONSE_TIME: f64 = 5.0;
+static UNUSUAL_LONG_RESPONSE_TIME: Lazy<f64> = Lazy::new(|| {
+    env::var("UNUSUAL_LONG_RESPONSE_TIME")
+        .expect("UNUSUAL_LONG_RESPONSE_TIME must be set")
+        .parse()
+        .expect("UNUSUAL_LONG_RESPONSE_TIME must be a number")
+});
 
 static REQUEST_COUNTS: Lazy<Mutex<HashMap<IpAddr, (u32, Instant)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static GROQ_API_KEY: Lazy<String> = Lazy::new(|| {
@@ -118,7 +124,8 @@ fn models() -> (Status, (ContentType, String)) {
 }
 
 fn load_models() -> Vec<Model> {
-    let file = File::open("models.json").expect("Cannot open models.json file");
+    let file_path = env::var("MODELS_FILE").expect("TOKEN_DATA_FILE must be set");
+    let file = File::open(file_path).expect("Cannot open models.json file");
     let reader = BufReader::new(file);
     let models_file: ModelsFile = serde_json::from_reader(reader).expect("Error reading JSON data");
     models_file.models
@@ -175,10 +182,10 @@ async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> 
                 "output_tokens": output_tokens
             });
             save_request_time(response_time.elapsed().as_secs_f64(), "Ok".to_string(), client_ip, input_tokens, output_tokens, chat_request.model.to_string());
-            if  response_time.elapsed().as_secs_f64() > UNUSUAL_LONG_RESPONSE_TIME {
+            if  response_time.elapsed().as_secs_f64() > *UNUSUAL_LONG_RESPONSE_TIME {
                 unusual_long_response_log(response_body.to_string());
             }
-            (Status::Ok, (ContentType::JSON, response_body.to_string()))
+            (Status::Ok, (ContentType::JSON, response_body["response"].to_string()))
         }
         Err(_) => {
             save_request_time(response_time.elapsed().as_secs_f64(), "Internal Server Error".to_string(), client_ip, input_tokens, 0, chat_request.model.to_string());
@@ -188,22 +195,25 @@ async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> 
 }
 
 fn save_request_time(duration: f64, status: String, client_ip: Option<IpAddr>, input_tokens: usize, output_tokens: usize, model: String) {
+    let time_now = Utc::now();
+    let file_path = env::var("REQUEST_TIMES_FILE").expect("REQUEST_TIMES_FILE must be set");
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
-        .open("request_times.log")
+        .open(file_path)
         .unwrap();
 
-    let line = format!("ip: {}, status: {}, duration: {}, input / output tokens: {}/{}, model: {}", client_ip.unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))), status, duration, input_tokens, output_tokens, model);
+    let line = format!("{} - {}: status: {}, duration: {}, input / output tokens: {}/{}, model: {}", time_now.to_rfc3339(), client_ip.unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))), status, duration, input_tokens, output_tokens, model);
     
     writeln!(file, "{}", line).unwrap();
 }
 
 fn unusual_long_response_log(output: String) {
+    let file_path = env::var("REQUEST_TIMES_FILE").expect("REQUEST_TIMES_FILE must be set");
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
-        .open("request_times.log")
+        .open(file_path)
         .unwrap();
 
     let line = format!("output: {}", output);
