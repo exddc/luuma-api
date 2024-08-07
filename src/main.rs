@@ -1,5 +1,8 @@
 #[macro_use] extern crate rocket;
 
+#[cfg(test)]
+mod tests;
+
 use rocket::http::{Status, ContentType};
 use rocket::serde::json::Json;
 use serde::{Deserialize, Serialize};
@@ -64,10 +67,10 @@ struct TokenData {
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct Model {
-    pub id: String,
-    pub name: String,
-    pub description: String,
+struct Model {
+    id: String,
+    name: String,
+    description: String,
 }
 
 #[derive(Deserialize)]
@@ -185,7 +188,7 @@ async fn message(chat_request: Json<ChatRequest>, client_ip: Option<IpAddr>) -> 
             if  response_time.elapsed().as_secs_f64() > *UNUSUAL_LONG_RESPONSE_TIME {
                 unusual_long_response_log(response_body.to_string());
             }
-            (Status::Ok, (ContentType::JSON, response_body["response"].to_string()))
+            (Status::Ok, (ContentType::JSON, response_body.to_string()))
         }
         Err(_) => {
             save_request_time(response_time.elapsed().as_secs_f64(), "Internal Server Error".to_string(), client_ip, input_tokens, 0, chat_request.model.to_string());
@@ -284,6 +287,6 @@ fn check_or_create_file(file_path: &String) -> io::Result<()> {
 #[launch]
 fn rocket() -> _ {
     dotenv().ok();
-    rocket::build().mount("/v1", routes![index, message, models])
+    rocket::build().mount("/v1", routes![index, models, message])
         .register("/", catchers![not_found])
 }
