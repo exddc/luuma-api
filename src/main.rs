@@ -111,6 +111,14 @@ fn index() -> (Status, (ContentType, String))  {
     (Status::Ok, (ContentType::JSON, response.to_string()))
 }
 
+#[get("/health")]
+fn health() -> (Status, (ContentType, String))  {
+    let response = serde_json::json!({
+            "status": "ok"
+    });
+    (Status::Ok, (ContentType::JSON, response.to_string()))
+}
+
 #[catch(404)]
 fn not_found() -> (Status, (ContentType, String))  {
     let response = serde_json::json!({
@@ -289,4 +297,5 @@ fn rocket() -> _ {
     dotenv().ok();
     rocket::build().mount("/v1", routes![index, models, message])
         .register("/", catchers![not_found])
+        .mount("/", routes![health])
 }
